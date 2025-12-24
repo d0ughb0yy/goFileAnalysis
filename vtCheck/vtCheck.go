@@ -38,7 +38,7 @@ func VtCheck(filePath string) {
 	}
 
 	analysisID := analysis.ID()
-	fmt.Printf("[*] File uploaded. Analysis ID: %s\n", analysisID)
+	fmt.Printf("[+] File uploaded. Analysis ID: %s\n", analysisID)
 	fmt.Println("[!] Waiting for analysis to complete...")
 
 	// Poll for results
@@ -100,7 +100,7 @@ func VtCheck(filePath string) {
 			if malicious > 0 {
 				fmt.Println("[!] File detected as malicious by one or more engines [!]")
 			} else {
-				fmt.Println("[*] File appears clean [*]")
+				fmt.Println("[+] File appears clean [+]")
 			}
 
 			return
