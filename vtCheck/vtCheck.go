@@ -2,110 +2,171 @@ package vtCheck
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"time"
 
 	vt "github.com/VirusTotal/vt-go"
 )
 
-func VtCheck(filePath string) {
-
-	apiKey := os.Getenv("VT_API_KEY")
-	if apiKey == "" {
-		fmt.Println("Please set VT_API_KEY environment variable")
-		os.Exit(1)
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
 	}
 
-	// Create VirusTotal Client
+	errStr := err.Error()
+
+	if netErr, ok := err.(net.Error); ok {
+		if netErr.Timeout() || netErr.Temporary() {
+			return true
+		}
+	}
+
+	retryablePatterns := []string{
+		"timeout",
+		"connection refused",
+		"no such host",
+		"connection reset",
+		"rate limit",
+		"too many requests",
+		"503",
+		"502",
+		"504",
+	}
+
+	for _, pattern := range retryablePatterns {
+		for i := 0; i <= len(errStr)-len(pattern); i++ {
+			if i+len(pattern) <= len(errStr) && errStr[i:i+len(pattern)] == pattern {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func retryWithBackoff(operation func() error, maxRetries int) error {
+	var err error
+	backoff := time.Duration(2)
+
+	for i := 0; i <= maxRetries; i++ {
+		err = operation()
+		if err == nil {
+			return nil
+		}
+
+		if i == maxRetries {
+			return fmt.Errorf("failed after %d retries: %v", maxRetries, err)
+		}
+
+		if !isRetryableError(err) {
+			return fmt.Errorf("non-retryable error: %v", err)
+		}
+
+		time.Sleep(backoff * time.Second)
+		backoff *= 2
+	}
+
+	return err
+}
+
+func VtCheck(filePath string) {
+	apiKey := os.Getenv("VT_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[!] Please set VT_API_KEY environment variable")
+		os.Exit(1)
+	}
+	os.Unsetenv("VT_API_KEY")
+
 	client := vt.NewClient(apiKey)
 
-	// Open file
 	file, err := os.Open(filePath)
 	if err != nil {
-		fmt.Printf("Error opening file: %v\n", err)
+		fmt.Printf("[!] Error opening file: %v\n", err)
 		os.Exit(1)
 	}
 	defer file.Close()
 
-	// Send file for scanning
-	fmt.Printf("Uploading file: %s\n", filePath)
+	fmt.Printf("[*] Uploading file: %s\n", filePath)
 	scanner := client.NewFileScanner()
 
-	analysis, err := scanner.ScanFile(file, nil)
+	var analysisObj *vt.Object
+	err = retryWithBackoff(func() error {
+		var scanErr error
+		analysisObj, scanErr = scanner.ScanFile(file, nil)
+		return scanErr
+	}, 3)
+
 	if err != nil {
-		fmt.Printf("Error uploading file: %v\n", err)
+		fmt.Printf("[!] Upload failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	analysisID := analysis.ID()
-	fmt.Printf("[+] File uploaded. Analysis ID: %s\n", analysisID)
-	fmt.Println("[!] Waiting for analysis to complete...")
+	analysisID := analysisObj.ID()
+	fmt.Printf("[+] File uploaded successfully. Analysis ID: %s\n", analysisID)
+	fmt.Println("[*] Waiting for analysis to complete...")
 
-	// Poll for results
-	maxAttempts := 30
-	for i := 0; i < maxAttempts; i++ {
-		time.Sleep(10 * time.Second)
+	maxAttempts := 60
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var sleepDuration time.Duration
+		switch {
+		case attempt < 10:
+			sleepDuration = 15 * time.Second
+		case attempt < 30:
+			sleepDuration = 30 * time.Second
+		default:
+			sleepDuration = 60 * time.Second
+		}
+		time.Sleep(sleepDuration)
 
-		// Get analysis results
-		url := vt.URL("analyses/%s", analysisID)
-		analysisObj, err := client.GetObject(url)
+		var resultObj *vt.Object
+		err = retryWithBackoff(func() error {
+			url := vt.URL("analyses/%s", analysisID)
+			var getErr error
+			resultObj, getErr = client.GetObject(url)
+			return getErr
+		}, 3)
+
 		if err != nil {
-			fmt.Printf("Error getting results: %s\n", err)
-			continue
+			fmt.Printf("[!] Failed to retrieve analysis results: %v\n", err)
+			os.Exit(1)
 		}
 
-		status, err := analysisObj.GetString("status")
+		status, err := resultObj.GetString("status")
 		if err != nil {
-			fmt.Printf("Error getting status: %s\n", err)
-			continue
+			fmt.Printf("[!] Error retrieving analysis status: %v\n", err)
+			os.Exit(1)
 		}
-
-		fmt.Printf("Status: %s\n", status)
 
 		if status == "completed" {
-			// Get stats as integers
-			malicious, err := analysisObj.GetInt64("stats.malicious")
-			if err != nil {
-				malicious = 0
-			}
-			suspicious, err := analysisObj.GetInt64("stats.suspicious")
-			if err != nil {
-				suspicious = 0
-			}
-			undetected, err := analysisObj.GetInt64("stats.undetected")
-			if err != nil {
-				undetected = 0
-			}
-			harmless, err := analysisObj.GetInt64("stats.harmless")
-			if err != nil {
-				harmless = 0
-			}
-			failure, err := analysisObj.GetInt64("stats.failure")
-			if err != nil {
-				failure = 0
-			}
-			timeout, err := analysisObj.GetInt64("stats.timeout")
-			if err != nil {
-				timeout = 0
+			stats := map[string]int64{
+				"malicious":  0,
+				"suspicious": 0,
+				"undetected": 0,
+				"harmless":   0,
+				"failure":    0,
+				"timeout":    0,
 			}
 
 			fmt.Println("\n=== Scan Results ===")
-			fmt.Printf("Malicious: %d\n", malicious)
-			fmt.Printf("Suspicious: %d\n", suspicious)
-			fmt.Printf("Undetected: %d\n", undetected)
-			fmt.Printf("Harmless: %d\n", harmless)
-			fmt.Printf("Failure: %d\n", failure)
-			fmt.Printf("Timeout: %d\n", timeout)
+			for key := range stats {
+				val, err := resultObj.GetInt64(fmt.Sprintf("stats.%s", key))
+				if err == nil {
+					stats[key] = val
+				}
+				fmt.Printf("%s: %d\n", key, stats[key])
+			}
 
-			if malicious > 0 {
-				fmt.Println("[!] File detected as malicious by one or more engines [!]")
+			if stats["malicious"] > 0 {
+				fmt.Printf("\n[!] File detected as malicious by one or more engines\n")
 			} else {
-				fmt.Println("[+] File appears clean [+]")
+				fmt.Printf("\n[+] File appears clean\n")
 			}
 
 			return
 		}
 	}
 
-	fmt.Println("[!] Analysis did not complete within expected time.")
+	fmt.Println("[!] Analysis did not complete within the maximum wait time.")
+	os.Exit(1)
 }

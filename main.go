@@ -22,7 +22,12 @@ func main() {
 		Extension: filepath.Ext(userFile),
 	}
 
-	newFile.CheckHealth()
-	vtCheck.VtCheck(userFile)
+	needsScan := newFile.CheckHealth()
+
+	if needsScan {
+		vtCheck.VtCheck(userFile)
+	} else {
+		fmt.Println("[!] File appears clean, skipping VirusTotal scan, check manually if suspicious")
+	}
 
 }
