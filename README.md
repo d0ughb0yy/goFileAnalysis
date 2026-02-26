@@ -4,12 +4,11 @@ A Go program that uses [the filetype module by h2non](https://github.com/h2non/f
 
 The program will also upload the file to VirusTotal and output the results using the official vt-go package.
 
-**Set the VT_API_KEY environment variable and set your API key to be able to upload to VirusTotal.**
+**Set the VT_API_KEY environment variable inside a .env file.**
 
 **Usage:**
 
 ```Shell
-export VT_API_KEY=<api_key>
 cd goFileAnalysis
 go build
 ./goFileAnalysis <file_path>
