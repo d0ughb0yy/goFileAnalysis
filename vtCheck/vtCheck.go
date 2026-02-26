@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	vt "github.com/VirusTotal/vt-go"
+	"github.com/joho/godotenv"
 )
 
 func isRetryableError(err error) bool {
@@ -71,6 +73,8 @@ func retryWithBackoff(operation func() error, maxRetries int) error {
 }
 
 func VtCheck(filePath string) {
+	godotenv.Load()
+
 	apiKey := os.Getenv("VT_API_KEY")
 	if apiKey == "" {
 		fmt.Println("[!] Please set VT_API_KEY environment variable")
@@ -103,8 +107,7 @@ func VtCheck(filePath string) {
 	}
 
 	analysisID := analysisObj.ID()
-	fmt.Printf("[+] File uploaded successfully. Analysis ID: %s\n", analysisID)
-	fmt.Println("[*] Waiting for analysis to complete...")
+	fmt.Println("[+] File uploaded successfully. Waiting for analysis...")
 
 	maxAttempts := 60
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -157,8 +160,41 @@ func VtCheck(filePath string) {
 				fmt.Printf("%s: %d\n", key, stats[key])
 			}
 
-			if stats["malicious"] > 0 {
-				fmt.Printf("\n[!] File detected as malicious by one or more engines\n")
+			results, err := resultObj.Get("results")
+			if err == nil {
+				resultsMap, ok := results.(map[string]interface{})
+				if ok {
+					detections := []map[string]string{}
+
+					for engine, data := range resultsMap {
+						dataMap, ok := data.(map[string]interface{})
+						if !ok {
+							continue
+						}
+						category, _ := dataMap["category"].(string)
+						if category == "malicious" || category == "suspicious" {
+							result, _ := dataMap["result"].(string)
+							detections = append(detections, map[string]string{
+								"engine":   engine,
+								"category": category,
+								"result":   result,
+							})
+						}
+					}
+
+					if len(detections) > 0 {
+						fmt.Println("\n=== Detection Details ===")
+						fmt.Printf("%-20s | %-12s | %s\n", "Engine", "Category", "Result")
+						fmt.Println(strings.Repeat("-", 60))
+						for _, d := range detections {
+							fmt.Printf("%-20s | %-12s | %s\n", d["engine"], d["category"], d["result"])
+						}
+					}
+				}
+			}
+
+			if stats["malicious"] > 0 || stats["suspicious"] > 0 {
+				fmt.Printf("\n[!] File detected as malicious/suspicious by one or more engines\n")
 			} else {
 				fmt.Printf("\n[+] File appears clean\n")
 			}

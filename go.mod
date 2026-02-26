@@ -7,4 +7,7 @@ require (
 	github.com/h2non/filetype v1.1.3
 )
 
-require github.com/thedevsaddam/gojsonq/v2 v2.5.2 // indirect
+require (
+	github.com/joho/godotenv v1.5.1 // indirect
+	github.com/thedevsaddam/gojsonq/v2 v2.5.2 // indirect
+)
