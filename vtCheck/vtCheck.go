@@ -1,15 +1,34 @@
 package vtCheck
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	vt "github.com/VirusTotal/vt-go"
-	"github.com/joho/godotenv"
 )
+
+var (
+	ErrNoAPIKey     = errors.New("VT_API_KEY environment variable not set")
+	ErrFileOpen     = errors.New("failed to open file")
+	ErrUploadFailed = errors.New("file upload failed")
+	ErrResultsFetch = errors.New("failed to retrieve analysis results")
+	ErrStatusFetch  = errors.New("failed to retrieve analysis status")
+	ErrTimeout      = errors.New("analysis did not complete within max wait time")
+)
+
+func getEnvInt(key string, defaultVal int) int {
+	if val, ok := os.LookupEnv(key); ok {
+		if intVal, err := strconv.Atoi(val); err == nil {
+			return intVal
+		}
+	}
+	return defaultVal
+}
 
 func isRetryableError(err error) bool {
 	if err == nil {
@@ -72,13 +91,11 @@ func retryWithBackoff(operation func() error, maxRetries int) error {
 	return err
 }
 
-func VtCheck(filePath string) {
-	godotenv.Load()
-
+func VtCheck(filePath string) error {
 	apiKey := os.Getenv("VT_API_KEY")
 	if apiKey == "" {
 		fmt.Println("[!] Please set VT_API_KEY environment variable")
-		os.Exit(1)
+		return ErrNoAPIKey
 	}
 	os.Unsetenv("VT_API_KEY")
 
@@ -87,7 +104,7 @@ func VtCheck(filePath string) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		fmt.Printf("[!] Error opening file: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("%w: %v", ErrFileOpen, err)
 	}
 	defer file.Close()
 
@@ -103,22 +120,26 @@ func VtCheck(filePath string) {
 
 	if err != nil {
 		fmt.Printf("[!] Upload failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("%w: %v", ErrUploadFailed, err)
 	}
 
 	analysisID := analysisObj.ID()
 	fmt.Println("[+] File uploaded successfully. Waiting for analysis...")
 
-	maxAttempts := 60
+	maxAttempts := getEnvInt("VT_MAX_POLL_ATTEMPTS", 60)
+	sleepPhase1 := getEnvInt("VT_POLL_SLEEP_PHASE1", 15)
+	sleepPhase2 := getEnvInt("VT_POLL_SLEEP_PHASE2", 30)
+	sleepPhase3 := getEnvInt("VT_POLL_SLEEP_PHASE3", 60)
+
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		var sleepDuration time.Duration
 		switch {
 		case attempt < 10:
-			sleepDuration = 15 * time.Second
+			sleepDuration = time.Duration(sleepPhase1) * time.Second
 		case attempt < 30:
-			sleepDuration = 30 * time.Second
+			sleepDuration = time.Duration(sleepPhase2) * time.Second
 		default:
-			sleepDuration = 60 * time.Second
+			sleepDuration = time.Duration(sleepPhase3) * time.Second
 		}
 		time.Sleep(sleepDuration)
 
@@ -132,13 +153,13 @@ func VtCheck(filePath string) {
 
 		if err != nil {
 			fmt.Printf("[!] Failed to retrieve analysis results: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("%w: %v", ErrResultsFetch, err)
 		}
 
 		status, err := resultObj.GetString("status")
 		if err != nil {
 			fmt.Printf("[!] Error retrieving analysis status: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("%w: %v", ErrStatusFetch, err)
 		}
 
 		if status == "completed" {
@@ -199,10 +220,10 @@ func VtCheck(filePath string) {
 				fmt.Printf("\n[+] File appears clean\n")
 			}
 
-			return
+			return nil
 		}
 	}
 
 	fmt.Println("[!] Analysis did not complete within the maximum wait time.")
-	os.Exit(1)
+	return ErrTimeout
 }

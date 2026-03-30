@@ -3,6 +3,7 @@ package checks
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/h2non/filetype"
 )
@@ -30,14 +31,14 @@ func (f *File) CheckHealth() bool {
 	}
 	defer file.Close()
 
-	head := make([]byte, 261)
+	head := make([]byte, 262)
 	_, err = file.Read(head)
 	if err != nil {
 		fmt.Printf("[!] Error reading file: %v\n", err)
 		return false
 	}
 
-	kind, err := filetype.MatchFile(f.Path)
+	kind, err := filetype.Match(head)
 	if err != nil {
 		fmt.Printf("[!] Error matching file type: %v\n", err)
 		return false
@@ -54,7 +55,8 @@ func (f *File) CheckHealth() bool {
 		return f.printTypeInfo(kind.Extension, kind.MIME.Value)
 
 	default:
-		if !filetype.IsSupported(f.Extension) {
+		ext := strings.TrimPrefix(f.Extension, ".")
+		if !filetype.IsSupported(ext) {
 			fmt.Printf("[!] FILE: %s | UNSUPPORTED TYPE: %s\n", f.Path, f.Extension)
 		} else {
 			fmt.Printf("[!] FILE: %s | UNKNOWN TYPE: %s\n", f.Path, f.Extension)
