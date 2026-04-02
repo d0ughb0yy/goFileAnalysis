@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/d0ughb0yy/goFileAnalysis/checks"
-	"github.com/d0ughb0yy/goFileAnalysis/vtCheck"
+	"github.com/d0ughb0yy/goFileAnalysis/internal/checks"
+	"github.com/d0ughb0yy/goFileAnalysis/internal/vtcheck"
 )
 
 func main() {
@@ -22,13 +22,18 @@ func main() {
 	}
 	userFile := flag.Arg(0)
 
-	if *apiKey != "" {
-		os.Setenv("VT_API_KEY", *apiKey)
+	apiKeyToUse := *apiKey
+	if apiKeyToUse == "" {
+		apiKeyToUse = os.Getenv("VT_API_KEY")
 	}
 
 	if _, err := os.Stat(userFile); os.IsNotExist(err) {
 		fmt.Printf("[!] File does not exist: %s\n", userFile)
 		os.Exit(1)
+	}
+
+	if apiKeyToUse != "" {
+		os.Setenv("VT_API_KEY", apiKeyToUse)
 	}
 
 	newFile := checks.File{
@@ -37,10 +42,14 @@ func main() {
 		Extension: filepath.Ext(userFile),
 	}
 
-	needsScan := newFile.CheckHealth()
+	suspicious, err := newFile.CheckHealth()
+	if err != nil {
+		fmt.Printf("[!] File check failed: %v\n", err)
+		os.Exit(1)
+	}
 
-	if needsScan {
-		if err := vtCheck.VtCheck(userFile); err != nil {
+	if suspicious {
+		if err := vtcheck.VtCheck(userFile); err != nil {
 			fmt.Printf("[!] VirusTotal check failed: %v\n", err)
 			os.Exit(1)
 		}

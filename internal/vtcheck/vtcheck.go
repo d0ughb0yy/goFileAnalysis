@@ -1,15 +1,22 @@
-package vtCheck
+package vtcheck
 
 import (
 	"errors"
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	vt "github.com/VirusTotal/vt-go"
+)
+
+const (
+	maxPollAttempts = 60
+	pollPhase1Limit = 20
+	pollPhase2Limit = 60
+	pollInterval1   = 15 * time.Second
+	pollInterval2   = 30 * time.Second
 )
 
 var (
@@ -20,15 +27,6 @@ var (
 	ErrStatusFetch  = errors.New("failed to retrieve analysis status")
 	ErrTimeout      = errors.New("analysis did not complete within max wait time")
 )
-
-func getEnvInt(key string, defaultVal int) int {
-	if val, ok := os.LookupEnv(key); ok {
-		if intVal, err := strconv.Atoi(val); err == nil {
-			return intVal
-		}
-	}
-	return defaultVal
-}
 
 func isRetryableError(err error) bool {
 	if err == nil {
@@ -97,7 +95,10 @@ func VtCheck(filePath string) error {
 		fmt.Println("[!] Please set VT_API_KEY environment variable")
 		return ErrNoAPIKey
 	}
-	os.Unsetenv("VT_API_KEY")
+	if len(apiKey) < 32 {
+		fmt.Println("[!] Invalid API key: key appears too short")
+		return fmt.Errorf("invalid API key: minimum 32 characters required")
+	}
 
 	client := vt.NewClient(apiKey)
 
@@ -126,20 +127,14 @@ func VtCheck(filePath string) error {
 	analysisID := analysisObj.ID()
 	fmt.Println("[+] File uploaded successfully. Waiting for analysis...")
 
-	maxAttempts := getEnvInt("VT_MAX_POLL_ATTEMPTS", 60)
-	sleepPhase1 := getEnvInt("VT_POLL_SLEEP_PHASE1", 15)
-	sleepPhase2 := getEnvInt("VT_POLL_SLEEP_PHASE2", 30)
-	sleepPhase3 := getEnvInt("VT_POLL_SLEEP_PHASE3", 60)
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; attempt < maxPollAttempts; attempt++ {
 		var sleepDuration time.Duration
-		switch {
-		case attempt < 10:
-			sleepDuration = time.Duration(sleepPhase1) * time.Second
-		case attempt < 30:
-			sleepDuration = time.Duration(sleepPhase2) * time.Second
-		default:
-			sleepDuration = time.Duration(sleepPhase3) * time.Second
+		if attempt < pollPhase1Limit {
+			sleepDuration = pollInterval1
+		} else if attempt < pollPhase2Limit {
+			sleepDuration = pollInterval2
+		} else {
+			sleepDuration = pollInterval2
 		}
 		time.Sleep(sleepDuration)
 

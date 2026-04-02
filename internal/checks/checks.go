@@ -23,25 +23,22 @@ func (f *File) printTypeInfo(fileType, mime string) bool {
 	return false
 }
 
-func (f *File) CheckHealth() bool {
+func (f *File) CheckHealth() (bool, error) {
 	file, err := os.Open(f.Path)
 	if err != nil {
-		fmt.Printf("[!] Error opening file: %v\n", err)
-		return false
+		return false, fmt.Errorf("failed to open file %s: %w", f.Path, err)
 	}
 	defer file.Close()
 
 	head := make([]byte, 262)
 	_, err = file.Read(head)
 	if err != nil {
-		fmt.Printf("[!] Error reading file: %v\n", err)
-		return false
+		return false, fmt.Errorf("failed to read file %s: %w", f.Path, err)
 	}
 
 	kind, err := filetype.Match(head)
 	if err != nil {
-		fmt.Printf("[!] Error matching file type: %v\n", err)
-		return false
+		return false, fmt.Errorf("failed to match file type for %s: %w", f.Path, err)
 	}
 
 	switch {
@@ -52,7 +49,7 @@ func (f *File) CheckHealth() bool {
 		filetype.IsDocument(head),
 		filetype.IsFont(head),
 		filetype.IsApplication(head):
-		return f.printTypeInfo(kind.Extension, kind.MIME.Value)
+		return f.printTypeInfo(kind.Extension, kind.MIME.Value), nil
 
 	default:
 		ext := strings.TrimPrefix(f.Extension, ".")
@@ -61,7 +58,7 @@ func (f *File) CheckHealth() bool {
 		} else {
 			fmt.Printf("[!] FILE: %s | UNKNOWN TYPE: %s\n", f.Path, f.Extension)
 		}
-		return true
+		return true, nil
 	}
 
 }
